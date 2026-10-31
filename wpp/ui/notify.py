@@ -23,6 +23,26 @@ from .widgets import fmt_size, fmt_time, icon_button, label, push
 THUMB_W, THUMB_H = 104, 58
 
 
+def wrap_lines(text, fm, width, max_lines):
+    """Word-wrap `text` to `width` pixels; the last allowed line ends in '…' when text is left over.
+
+    A wrapping QLabel can't tell its height before the window is laid out, which cut long titles off."""
+    words, lines, cur = text.split(), [], ""
+    for i, w in enumerate(words):
+        test = f"{cur} {w}".strip()
+        if fm.horizontalAdvance(test) <= width or not cur:
+            cur = test
+            continue
+        lines.append(cur)
+        cur = w
+        if len(lines) == max_lines - 1:
+            cur = " ".join(words[i:])
+            break
+    if cur:
+        lines.append(fm.elidedText(cur, Qt.ElideRight, width) if len(lines) == max_lines - 1 else cur)
+    return [fm.elidedText(x, Qt.ElideRight, width) for x in lines[:max_lines]]
+
+
 class Note(QWidget):
     closed = Signal(object)
     _thumb_ready = Signal(bytes)
@@ -66,7 +86,8 @@ class Note(QWidget):
         g.addLayout(pic, 0, 0)
         col = QVBoxLayout()
         col.setSpacing(2)
-        self.title = label("", "title", wrap=True)
+        self.title = label("", "title")         # wrapped by wrap_lines(), so its height is known up front
+        self.title.setTextFormat(Qt.PlainText)
         self.body = label("", "body", wrap=True)
         self.body.setTextFormat(Qt.RichText)
         col.addWidget(self.title)
@@ -120,7 +141,10 @@ class Note(QWidget):
     def set(self, title, body="", icon="ok", tone="", actions=(), timeout=0, combo=None, thumb_url=""):
         self._spec = (icon, tone)
         self.ic.setPixmap(icons.pixmap(icon, self._tone_color(tone), 20))
-        self.title.setText(title)
+        self.title.ensurePolished()         # the card's stylesheet sets the title font; measure with that one
+        lines = wrap_lines(html.unescape(title), self.title.fontMetrics(), self._text_width(bool(thumb_url)), 2)
+        self.title.setText("\n".join(lines))
+        self.title.setToolTip(html.unescape(title) if lines and lines[-1].endswith("…") else "")
         self.body.setText(body)
         self.body.setVisible(bool(body))
         while self.extra.count():
@@ -150,6 +174,13 @@ class Note(QWidget):
             self.timer.start(timeout)
         self.adjustSize()
         self.center.relayout()
+
+    def _text_width(self, with_thumb):
+        """Width of the title column: the card minus margins, the picture and the close button."""
+        g = self.card.layout()
+        m = g.contentsMargins()
+        pic = THUMB_W if with_thumb else 20
+        return self.width() - 24 - m.left() - m.right() - pic - 26 - 2 * g.horizontalSpacing()
 
     def _fetch_thumb(self, url):
         try:

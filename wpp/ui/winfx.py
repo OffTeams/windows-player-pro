@@ -4,7 +4,7 @@ import sys
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor, QPainter, QPen
-from PySide6.QtWidgets import QComboBox, QLabel, QMenu, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QLabel, QMenu, QWidget
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
@@ -117,4 +117,10 @@ class PopupRounder(QObject):
                 container.setStyleSheet("QComboBoxPrivateContainer { background: transparent; border: none; }")
         elif t == QEvent.Show and isinstance(obj, QMenu) and obj.isWindow():
             round_corners(obj)
+        elif t == QEvent.Show and obj.metaObject().className() == "QComboBoxPrivateContainer":
+            # the list laid its rows out before the stylesheet made them 30px tall: they overlapped,
+            # leaving an empty strip at the bottom of a popup sized for the real height
+            view = obj.findChild(QAbstractItemView)
+            if view:
+                view.doItemsLayout()
         return False
