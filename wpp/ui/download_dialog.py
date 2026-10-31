@@ -290,7 +290,8 @@ class DownloadDialog(QDialog):
         autos = self.info.get("automatic_captions") or {}
         self.subs = CheckCombo("Без субтитров")
         for code in sorted(subs):
-            self.subs.add(lang_name(code), code)
+            named = self.voices and (subs[code] or [{}])[0].get("name")     # the player names its tracks itself
+            self.subs.add(named or lang_name(code), code)
         for code in ("ru", "en", "uk"):
             if code in autos and code not in subs:
                 self.subs.add(lang_name(code) + " · автоматические", code)
@@ -389,7 +390,10 @@ class DownloadDialog(QDialog):
             sel = f"{a}/ba/b"
         vbest = self.videos[0] if self.videos else None
         abest = self.audios[0] if self.audios else None
-        size = (_size(vf or vbest, self.dur) if mode in (0, 1) else 0) + (_size(af or abest, self.dur) if mode in (0, 2) else 0)
+        vsize = _size(vf or vbest, self.dur) if mode in (0, 1) else 0
+        size = vsize + (_size(af or abest, self.dur) if mode in (0, 2) else 0)
+        if mode in (0, 1) and not vsize:     # video of unknown size: the sound alone would be a false total
+            size = 0
         eps = self._chosen_episodes()
         if size and self.dur and len(eps) > 1:      # same bitrate, summed over the episodes' running time
             size = size / self.dur * sum(e.get("duration") or self.dur for e in eps)

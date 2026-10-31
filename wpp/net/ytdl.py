@@ -151,7 +151,9 @@ def _embedded(url, log):
     if not embed:
         return None
     log(f'<span class="ok">Плеер на странице: {html.escape(embed)}</span>')
-    return probe(embed, log, embeds=False)
+    # the page's own player failed: say so rather than fall back to a trailer embedded next to it
+    return probe(embed, log, embeds=False) or ProbeResult(
+        "error", "Collaps", page_url=url, message="Плеер на странице не удалось разобрать.")
 
 
 AUDIO_SEL = {"best": "ba", "aac": "ba[acodec^=mp4a]/ba", "opus": "ba[acodec=opus]/ba", "low": "wa[abr>=40]/wa/ba"}

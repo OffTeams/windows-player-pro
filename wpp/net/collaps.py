@@ -54,16 +54,23 @@ def parse(page):
     cur = re.search(r"current:\s*\{\s*season:\s*\"?(\d+)\"?\s*,\s*episode:\s*\"?([\w.-]+)", page)
     if seasons:
         return seasons, (cur.groups() if cur else None)
+    # a film: `title: "...", id: ..., poster: ..., source: {dash, hls, audio, cc}`; the page holds other
+    # objects with the same key names (WebRTC servers have a `cc:` number), so read only around `source`
+    at = page.find("source:")
+    if at < 0:
+        return [], None
     film = {}
-    for k in ("hls", "dash", "duration", "title", "poster"):
-        m = re.search(rf"""\b{k}\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\d+))""", page)
+    for k, start in (("hls", at), ("dash", at), ("title", max(0, at - 600)), ("poster", max(0, at - 600))):
+        m = re.compile(rf"""\b{k}\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')""").search(page, start)
         if m:
-            film[k] = json.loads(f'"{m.group(1)}"') if m.group(1) is not None else (m.group(2) or int(m.group(3)))
-    audio = _js_value(page, "audio")
-    if audio:
+            film[k] = json.loads(f'"{m.group(1)}"') if m.group(1) is not None else m.group(2)
+    end = page.find("\n\t\t\t}", at)
+    block = page[at:end if end > at else at + 4000]
+    audio = _js_value(block, "audio")
+    if isinstance(audio, dict):
         film["audio"] = audio
-    cc = _js_value(page, "cc")
-    if cc:
+    cc = _js_value(block, "cc")
+    if isinstance(cc, list):
         film["cc"] = cc
     if not (film.get("hls") or film.get("dash")):
         return [], None
@@ -151,10 +158,16 @@ class CollapsIE(InfoExtractor):
             formats += keep
         for f in formats:
             f["http_headers"] = headers
-            # the manifests declare about nine times the real bitrate (13.7 Mbit/s listed, 1.5 delivered):
-            # no estimate is better than a size ten times too large
-            for k in ("tbr", "vbr", "abr", "filesize_approx"):
-                f.pop(k, None)
+            # the manifests declare about nine times the real video bitrate (13.7 Mbit/s listed, 1.5 delivered):
+            # no estimate is better than a size ten times too large. Sound is listed about right (91 vs 61 kbit/s)
+            # and stays, as "abr" only: the queue uses it to foresee the sound part of a download
+            if f.get("vcodec") != "none":
+                for k in ("tbr", "vbr", "abr", "filesize_approx"):
+                    f.pop(k, None)
+            else:
+                f["abr"] = f.get("abr") or f.pop("tbr", None)
+                f.pop("tbr", None)
+                f.pop("filesize_approx", None)
         subs, taken = {}, set()
         for c in ep.get("cc") or []:
             if c.get("url"):
@@ -162,8 +175,11 @@ class CollapsIE(InfoExtractor):
                 taken.add(code)
                 subs[code] = [{"url": c["url"], "ext": "vtt", "name": c.get("name") or code}]
         title = ep.get("title") or (f"Сезон {season['season']}, серия {ep['episode']}" if season["season"] else vid)
+        duration = ep.get("duration") or next(       # films carry none: add up the manifest's fragments
+            (round(sum(fr.get("duration") or 0 for fr in f["fragments"])) for f in formats
+             if f.get("vcodec") not in (None, "none") and f.get("fragments")), None)
         return {
-            "id": vid, "title": title, "duration": ep.get("duration"),
+            "id": vid, "title": title, "duration": duration or None,
             "thumbnail": ep["poster"] if str(ep.get("poster", "")).startswith("http") else None,
             "formats": formats, "subtitles": subs, "http_headers": headers,
             "season_number": season["season"] or None, "episode_number": int(ep["episode"]) if str(ep.get("episode")).isdigit() else None,

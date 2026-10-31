@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
+from yt_dlp.postprocessor.common import PostProcessor
 
 from ..config import cfg, load_json, save_json
 from ..paths import ffmpeg_location
@@ -62,6 +63,19 @@ def pick_folder(preferred=None):
 
 class Cancelled(Exception):
     pass
+
+
+class _Plan(PostProcessor):
+    """Runs before the download: notes which parts (video, sound) are coming. The progress hook only
+    sees the part in flight, so without this the percentage restarts from zero at the sound part."""
+
+    def __init__(self, task):
+        super().__init__()
+        self.task = task
+
+    def run(self, info):
+        self.task._plan = (info.get("requested_formats") or [], info.get("duration") or 0)
+        return [], info
 
 
 @dataclass
@@ -230,9 +244,19 @@ class DownloadManager(QObject):
             flag = self._flags.get(t.id)
             if flag:
                 raise Cancelled(flag)
+            if d.get("status") in ("downloading", "finished"):
+                # video and sound come as separate files before merging: count them together, the parts
+                # not started yet by their expected size, so the percentage doesn't restart at each part
+                parts = t.__dict__.setdefault("_parts", {})
+                got = d.get("downloaded_bytes") or d.get("total_bytes") or 0
+                parts[d.get("filename") or ""] = (got, d.get("total_bytes") or d.get("total_bytes_estimate") or got)
+                wanted, dur = getattr(t, "_plan", ([], 0))
+                pending = sum(f.get("filesize") or f.get("filesize_approx")
+                              or (f.get("tbr") or f.get("abr") or 0) * 125 * dur
+                              for f in wanted[len(parts):])
+                t.done = sum(p[0] for p in parts.values())
+                t.total = sum(p[1] for p in parts.values()) + pending or t.total
             if d.get("status") == "downloading":
-                t.done = d.get("downloaded_bytes") or 0
-                t.total = d.get("total_bytes") or d.get("total_bytes_estimate") or t.total
                 t.speed = d.get("speed") or 0
                 t.eta = d.get("eta") or 0
                 t._tmp = d.get("tmpfilename") or ""
@@ -270,6 +294,7 @@ class DownloadManager(QObject):
                 opts["postprocessors"] = pp
             try:
                 with ydl(opts) as y:
+                    y.add_post_processor(_Plan(t), when="before_dl")
                     info = y.extract_info(t.url, download=True)
                     final = ((info or {}).get("requested_downloads") or [{}])[-1].get("filepath")
                     if final:                   # path after merging/remuxing/conversion, not a temporary part
@@ -288,6 +313,9 @@ class DownloadManager(QObject):
                 if info and info.get("wpp_voices") and t.file and os.path.exists(t.file):
                     self._tag_voices(t.file, info)
                 t.state, t.speed, t.eta = "done", 0, 0
+                if t.file and os.path.exists(t.file):   # the merged file, not the last part downloaded
+                    t.total = os.path.getsize(t.file)
+                t.__dict__.pop("_parts", None)
                 if t.total:
                     t.done = t.total
                 self.updated.emit(t.id)
