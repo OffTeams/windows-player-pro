@@ -4,7 +4,7 @@ import sys
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRectF, Qt, QTimer
 from PySide6.QtGui import QCursor, QPainter, QPen
-from PySide6.QtWidgets import QAbstractItemView, QComboBox, QLabel, QMenu, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QLabel, QMenu, QWidget
 
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
@@ -95,6 +95,11 @@ class Tip(QLabel):
 
 class PopupRounder(QObject):
     """App-wide filter for popup windows and tooltips."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Qt plays the list's slide-open animation in a separate opaque window: black corners for ~100 ms
+        QApplication.setEffectEnabled(Qt.UI_AnimateCombo, False)
 
     def eventFilter(self, obj, e):
         t = e.type()
