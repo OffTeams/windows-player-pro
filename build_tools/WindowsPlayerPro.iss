@@ -51,6 +51,8 @@ Name: "openwith"; Description: "Добавить плеер в «Открыть 
 [InstallDelete]
 ; icons of earlier versions (the name carries the version so Explorer's icon cache can't show a stale one)
 Type: files; Name: "{app}\icon-*.ico"
+; the previous git checkout of the code: its old packs mixed with the new history break git's maintenance
+Type: filesandordirs; Name: "{app}\app\.git"
 
 [Files]
 Source: "{#Dist}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
